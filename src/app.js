@@ -1,65 +1,55 @@
+const path = require('path');
+const favicon = require('serve-favicon');
+const compress = require('compression');
+const cors = require('cors');
+const helmet = require('helmet');
+const logger = require('winston');
+
 const feathers = require('@feathersjs/feathers');
+const configuration = require('@feathersjs/configuration');
 const express = require('@feathersjs/express');
-const Sequelize = require('sequelize');
-const service = require('feathers-sequelize');
+
+
+
+const middleware = require('./middleware');
+const services = require('./services');
+const appHooks = require('./app.hooks');
+const channels = require('./channels');
+
+const sequelize = require('./sequelize');
+
 const app = express(feathers());
-const uuidv4 = require('uuid/v4');
 
-const sequelize = new Sequelize('postgres://postgres:postgres@localhost:5432/toiletpaper');
-
-// Turn on JSON body parsing for REST services
-app.use(express.json())
-
-// Turn on URL-encoded body parsing for REST services
+// Load app configuration
+app.configure(configuration());
+// Enable CORS, security, compression, favicon and body parsing
+app.use(cors());
+app.use(helmet());
+app.use(compress());
+app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(favicon(path.join(app.get('public'), 'favicon.ico')));
+// Host the public folder
+app.use('/', express.static(app.get('public')));
 
-// Set up REST transport using Express
+// Set up Plugins and providers
 app.configure(express.rest());
 
-const Consumers = sequelize.define('consumers', {
-  id:   { type: Sequelize.UUID, primaryKey: true },
-  name: { type: Sequelize.TEXT, allowNull: false },
-  size: { type: Sequelize.INTEGER, allowNull: true }
-});
 
-const Purchases = sequelize.define('purchases', {
-  id:   { type: Sequelize.UUID, primaryKey: true },
-  name: { type: Sequelize.TEXT, allowNull: false },
-  amount: { type: Sequelize.INTEGER, allowNull: true },
-  unit: { type: Sequelize.TEXT, allowNull: true },
-  consumerId: { type: Sequelize.UUID, allowNull: false,
-    references: { model: Consumers, key: 'id', deferrable: Sequelize.Deferrable.INITIALLY_IMMEDIATE } },
-  datePurchased: {type: Sequelize.DATE, allowNull: false }
-});
+app.configure(sequelize);
 
-app.use('/consumers', service({
-  Model: Consumers,
-  paginate: {
-    default: 10,
-    max: 25
-  }
-}));
-app.use('/purchases', service({
-  Model: Purchases,
-  paginate: {
-    default: 10,
-    max: 25
-  }
-}));
 
-// Set up an error handler that gives us nicer errors
-app.use(express.errorHandler());
+// Configure other middleware (see `middleware/index.js`)
+app.configure(middleware);
+// Set up our services (see `services/index.js`)
+app.configure(services);
+// Set up event channels (see channels.js)
+app.configure(channels);
 
-Consumers.sync({force: true}).then(() => {
-  return Consumers.create({
-    id: uuidv4(),
-    name: 'julien',
-    size: 1
-  });
-});
+// Configure a middleware for 404s and the error handler
+app.use(express.notFound());
+app.use(express.errorHandler({ logger }));
 
-// Start the server on port 3030
-const port = 3030;
-app.listen(port, () => {
-  console.log(`Feathers server listening on port ${port}`);
-});
+app.hooks(appHooks);
+
+module.exports = app;
